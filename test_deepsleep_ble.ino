@@ -20,7 +20,7 @@ RTC_DATA_ATTR int bootCount = 0;
 touch_pad_t touchPin;
 unsigned long lastCommandTime = 0;
 
-// 调色控制函数（占位）
+// 调色控制函数
 void adjust_glass_color(String command) {
   if (command == "darken") {
     Serial.println("调整为深色");
@@ -49,6 +49,17 @@ class MyCharacteristicCallbacks : public BLECharacteristicCallbacks {
       Serial.print("收到命令: "); Serial.println(command);
       lastCommandTime = millis();
 
+      // 新增: 检查是否收到sleep命令
+      if (command == "sleep") {
+        Serial.println("收到sleep命令，立即进入休眠");
+        pCharacteristic->setValue("Going to sleep");
+        pCharacteristic->notify();
+        delay(100); // 确保通知发送完成
+        go_to_sleep();
+        return; // 在休眠后return，避免执行后续代码
+      }
+
+      // 原有的调色逻辑
       adjust_glass_color(command);
       String response = "Done";
       pCharacteristic->setValue(response.c_str());
@@ -65,17 +76,14 @@ void setup() {
   bootCount++;
   Serial.println("启动次数: " + String(bootCount));
 
-  // 配置触摸唤醒，使用 T2（GPIO2）
   touchSleepWakeUpEnable(T2, 40);
 
-  // 重置全局状态
   deviceConnected = false;
   oldDeviceConnected = false;
   pServer = NULL;
   pCharacteristic = NULL;
   bleInitialized = false;
 
-  // 检查唤醒原因
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   if (wakeup_reason == ESP_SLEEP_WAKEUP_TOUCHPAD) {
     Serial.println("由D2触摸唤醒，开始BLE...");
@@ -85,7 +93,6 @@ void setup() {
     Serial.println("首次启动或其他唤醒，开始BLE...");
   }
 
-  // 初始化 BLE 并进入工作状态
   init_ble();
   lastCommandTime = millis();
 }
@@ -93,17 +100,16 @@ void setup() {
 void loop() {
   unsigned long currentTime = millis();
 
-  // 30秒无命令后休眠
+  // 维持原有的30秒超时休眠机制
   if (bleInitialized && (currentTime - lastCommandTime >= INACTIVITY_TIMEOUT)) {
     Serial.println("30秒无命令，进入深度睡眠...");
     go_to_sleep();
   }
 
-  // 处理连接状态
   if (deviceConnected) {
-    delay(10); // 等待BLE通信
+    delay(10);
   } else if (oldDeviceConnected) {
-    delay(500); // 等待蓝牙栈准备好
+    delay(500);
     pServer->startAdvertising();
     Serial.println("重新开始广播");
     oldDeviceConnected = false;
@@ -134,7 +140,7 @@ void init_ble() {
   pAdvertising->addServiceUUID(SERVICE_UUID);
   pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x06);
-  pAdvertising->setMinInterval(0x100); // 625ms
+  pAdvertising->setMinInterval(0x100);
   pAdvertising->setMaxInterval(0x100);
   BLEDevice::startAdvertising();
   Serial.println("BLE广播启动，等待连接...");
@@ -151,12 +157,11 @@ void go_to_sleep() {
       Serial.println("广播已停止");
     }
 
-    // 如果有连接，等待片刻让客户端断开
     if (deviceConnected) {
       Serial.println("等待连接断开...");
       unsigned long startTime = millis();
       while (deviceConnected && (millis() - startTime < 5000)) {
-        delay(10); // 等待最多5秒
+        delay(10);
       }
       if (!deviceConnected) {
         Serial.println("连接已断开");
@@ -165,7 +170,6 @@ void go_to_sleep() {
       }
     }
 
-    // 禁用蓝牙控制器
     esp_bt_controller_disable();
     Serial.println("BT控制器已禁用");
     esp_bt_controller_deinit();
@@ -174,14 +178,10 @@ void go_to_sleep() {
     Serial.println("BLE未初始化，跳过关闭");
   }
 
-  // 刷新串口缓冲区
   Serial.flush();
-
-  // 配置触摸唤醒
   touchSleepWakeUpEnable(T2, 40);
   Serial.println("触摸唤醒已重新启用");
 
-  // 禁用电源域以降低功耗
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_OFF);
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_SLOW_MEM, ESP_PD_OPTION_ON);
   esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_FAST_MEM, ESP_PD_OPTION_OFF);
@@ -190,7 +190,7 @@ void go_to_sleep() {
   esp_sleep_enable_touchpad_wakeup();
   Serial.println("进入深度睡眠...");
   Serial.flush();
-  delay(100); // 确保串口输出完成
+  delay(100);
   Serial.end();
   esp_deep_sleep_start();
 }
